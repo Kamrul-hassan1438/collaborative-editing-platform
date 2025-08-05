@@ -1,0 +1,4 @@
+Set-ExecutionPolicy RemoteSigned -Scope Process
+venv\scripts\activate
+cd backend
+py manage.py runserver 8000

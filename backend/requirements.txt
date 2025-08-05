@@ -1,0 +1,12 @@
+Django==4.2.16
+djangorestframework==3.15.2
+djangorestframework-simplejwt==5.3.1
+mysqlclient==2.2.4
+redis==5.0.8
+django-channels==0.7.0
+asgiref==3.8.1
+django-redis
+channels_redis
+pymongo==4.8.0  # Added for MongoDB
+django-storages==1.14.3  
+daphne

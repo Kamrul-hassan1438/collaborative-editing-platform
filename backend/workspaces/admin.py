@@ -1,0 +1,40 @@
+
+from django.contrib import admin
+from .models import Workspace, WorkspaceMember, Folder, Document, Comment
+
+@admin.register(Workspace)
+class WorkspaceAdmin(admin.ModelAdmin):
+    list_display = ('name', 'owner', 'created_at')
+    list_filter = ('created_at',)
+    search_fields = ('name', 'owner__username')
+
+@admin.register(WorkspaceMember)
+class WorkspaceMemberAdmin(admin.ModelAdmin):
+    list_display = ('workspace', 'user', 'role')
+    list_filter = ('role',)
+    search_fields = ('workspace__name', 'user__username')
+
+@admin.register(Folder)
+class FolderAdmin(admin.ModelAdmin):
+    list_display = ('name', 'workspace', 'parent', 'created_at')
+    list_filter = ('workspace', 'created_at')
+    search_fields = ('name', 'workspace__name')
+    formfield_overrides = {
+        'parent': {'widget': admin.widgets.ForeignKeyRawIdWidget},
+    }
+    def get_form(self, request, obj=None, **kwargs):
+        form = super().get_form(request, obj, **kwargs)
+        form.base_fields['parent'].required = False  # Make parent optional
+        return form
+
+@admin.register(Document)
+class DocumentAdmin(admin.ModelAdmin):
+    list_display = ('title', 'workspace', 'folder', 'created_at', 'updated_at')
+    list_filter = ('workspace', 'created_at')
+    search_fields = ('title', 'workspace__name')
+
+@admin.register(Comment)
+class CommentAdmin(admin.ModelAdmin):
+    list_display = ('document', 'user', 'content', 'block_id', 'created_at')
+    list_filter = ('document', 'created_at')
+    search_fields = ('content', 'user__username', 'document__title')
