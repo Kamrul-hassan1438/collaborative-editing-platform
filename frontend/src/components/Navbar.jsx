@@ -11,19 +11,19 @@ function Navbar() {
   };
 
   return (
-    <nav className="bg-blue-600 p-4">
-      <div className="container mx-auto flex justify-between">
-        <Link to="/" className="text-white text-lg font-bold">Auth App</Link>
-        <div>
+    <nav className="bg-primary p-4 shadow-md">
+      <div className="container flex justify-between items-center">
+        <Link to="/" className="text-white text-xl font-bold">CoWrite</Link>
+        <div className="space-x-2">
           {token ? (
             <>
-              <Link to="/profile" className="text-white mr-4">Profile</Link>
-              <button onClick={handleLogout} className="text-white">Logout</button>
+              <Link to="/profile" className="nav-link">Profile</Link>
+              <button onClick={handleLogout} className="nav-link">Logout</button>
             </>
           ) : (
             <>
-              <Link to="/login" className="text-white mr-4">Login</Link>
-              <Link to="/register" className="text-white">Register</Link>
+              <Link to="/login" className="nav-link">Login</Link>
+              <Link to="/register" className="nav-link">Register</Link>
             </>
           )}
         </div>

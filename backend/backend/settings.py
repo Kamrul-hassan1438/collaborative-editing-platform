@@ -19,7 +19,6 @@ ALLOWED_HOSTS = ['*']
 
 
 
-
 INSTALLED_APPS = [
     'django.contrib.admin',
     'django.contrib.auth',
@@ -170,8 +169,6 @@ MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
 
-
-# backend/auth_app/settings.py (add to end)
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,

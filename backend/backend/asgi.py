@@ -1,19 +1,20 @@
-# backend/auth_app/asgi.py
 import os
 from django.core.asgi import get_asgi_application
 from channels.routing import ProtocolTypeRouter, URLRouter
-from channels.auth import AuthMiddlewareStack
-from django.urls import path
-from workspaces.consumers import DocumentConsumer, CommentConsumer
+from channels.security.websocket import AllowedHostsOriginValidator
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'backend.settings')
 
+django_asgi_app = get_asgi_application()
+
+from backend.middleware import TokenAuthMiddleware
+from workspaces.routing import websocket_urlpatterns
+
 application = ProtocolTypeRouter({
-    'http': get_asgi_application(),
-    'websocket': AuthMiddlewareStack(
-        URLRouter([
-            path('ws/documents/<int:document_id>/', DocumentConsumer.as_asgi()),
-            path('ws/comments/<int:document_id>/', CommentConsumer.as_asgi()),
-        ])
+    'http': django_asgi_app,
+    'websocket': AllowedHostsOriginValidator(
+        TokenAuthMiddleware(
+            URLRouter(websocket_urlpatterns)
+        )
     ),
 })

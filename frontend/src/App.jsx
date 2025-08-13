@@ -12,6 +12,7 @@ function App() {
   return (
     <Router>
       <Routes>
+        <Route path="/" element={<Login />} />
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
         <Route path="/profile" element={<Profile />} />
@@ -19,6 +20,7 @@ function App() {
         <Route path="/workspaces/:id" element={<WorkspaceDetail />} />
         <Route path="/workspaces/:id/join" element={<JoinWorkspace />} />
         <Route path="/documents/:id" element={<DocumentEditor />} />
+      
       </Routes>
     </Router>
   );

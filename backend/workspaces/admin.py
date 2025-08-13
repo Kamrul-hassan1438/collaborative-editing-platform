@@ -1,7 +1,7 @@
-
+# backend/workspaces/admin.py
 from django.contrib import admin
-from .models import Workspace, WorkspaceMember, Folder, Document, Comment
-
+from .models import( Workspace, WorkspaceMember, Folder, Document, Comment
+                    ,DocumentVersion)
 @admin.register(Workspace)
 class WorkspaceAdmin(admin.ModelAdmin):
     list_display = ('name', 'owner', 'created_at')
@@ -24,7 +24,7 @@ class FolderAdmin(admin.ModelAdmin):
     }
     def get_form(self, request, obj=None, **kwargs):
         form = super().get_form(request, obj, **kwargs)
-        form.base_fields['parent'].required = False  # Make parent optional
+        form.base_fields['parent'].required = False
         return form
 
 @admin.register(Document)
@@ -38,3 +38,16 @@ class CommentAdmin(admin.ModelAdmin):
     list_display = ('document', 'user', 'content', 'block_id', 'created_at')
     list_filter = ('document', 'created_at')
     search_fields = ('content', 'user__username', 'document__title')
+
+    
+@admin.register(DocumentVersion)
+class DocumentVersionAdmin(admin.ModelAdmin):
+    list_display = ('document', 'version_number', 'created_at')
+    list_filter = ('document', 'created_at')
+    search_fields = ('document__title', 'version_number')
+    readonly_fields = ('created_at',)
+
+    def get_readonly_fields(self, request, obj=None):
+        if obj:
+            return self.readonly_fields + ('version_number',)
+        return self.readonly_fields

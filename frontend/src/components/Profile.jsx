@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
@@ -28,27 +27,30 @@ function Profile() {
     navigate('/login');
   };
 
-  if (!user) return <div>Loading...</div>;
+  if (!user) return <div className="text-center p-6 text-gray-500">Loading...</div>;
 
   return (
-    <div className="max-w-md mx-auto bg-white p-6 rounded-lg shadow-md">
-      <h2 className="text-2xl font-bold mb-4">Profile</h2>
-      {error && <p className="text-red-500">{error}</p>}
-      <p><strong>Username:</strong> {user.username}</p>
-      <p><strong>Email:</strong> {user.email}</p>
-      <p><strong>Role:</strong> {user.role}</p>
-      <button
-        onClick={() => navigate('/workspaces')}
-        className="w-full bg-blue-600 text-white p-2 rounded mt-4"
-      >
-        Go to Workspaces
-      </button>
-      <button
-        onClick={handleLogout}
-        className="w-full bg-red-600 text-white p-2 rounded mt-2"
-      >
-        Logout
-      </button>
+    <div className="container py-8">
+      <div className="card max-w-md mx-auto">
+        <h2 className="text-3xl font-bold mb-6 text-gray-800">Profile</h2>
+        {error && <p className="error">{error}</p>}
+        <div className="space-y-4">
+          <p><strong className="text-gray-900">Username:</strong> {user.username}</p>
+          <p><strong className="text-gray-900">Email:</strong> {user.email}</p>
+          <button
+            onClick={() => navigate('/workspaces')}
+            className="btn-primary w-full"
+          >
+            Go to Workspaces
+          </button>
+          <button
+            onClick={handleLogout}
+            className="btn-danger w-full"
+          >
+            Logout
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

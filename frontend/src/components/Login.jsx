@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState } from 'react'; 
 import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import axios from '../axios'; 
 
 function Login() {
   const [username, setUsername] = useState('');
@@ -8,47 +8,51 @@ function Login() {
   const [error, setError] = useState('');
   const navigate = useNavigate();
 
-  const handleSubmit = async (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
     try {
       const response = await axios.post('http://localhost:8000/api/login/', { username, password });
       localStorage.setItem('access_token', response.data.access);
       localStorage.setItem('refresh_token', response.data.refresh);
-      navigate('/profile');
+      localStorage.setItem('user_id', response.data.user_id);
+      console.log('Login successful:', response.data);
+
+      navigate('/workspaces');
     } catch (err) {
-      setError('Invalid credentials');
+      setError(err.response?.data?.error || 'Login failed');
+      console.error('Login Error:', err.response?.data);
     }
   };
 
   return (
-    <div className="max-w-md mx-auto bg-white p-6 rounded-lg shadow-md">
-      <h2 className="text-2xl font-bold mb-4">Login</h2>
-      {error && <p className="text-red-500">{error}</p>}
-      <form onSubmit={handleSubmit}>
-        <div className="mb-4">
-          <label className="block text-gray-700">Username</label>
-          <input
-            type="text"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            className="w-full p-2 border rounded"
-            required
-          />
-        </div>
-        <div className="mb-4">
-          <label className="block text-gray-700">Password</label>
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="w-full p-2 border rounded"
-            required
-          />
-        </div>
-        <button type="submit" className="w-full bg-blue-600 text-white p-2 rounded">
-          Login
-        </button>
-      </form>
+    <div className="container py-8">
+      <div className="card max-w-md mx-auto">
+        <h2 className="text-3xl font-bold mb-6 text-gray-800">Login</h2>
+        {error && <p className="error">{error}</p>}
+        <form onSubmit={handleLogin}>
+          <div className="mb-4">
+            <label className="block text-gray-700 font-medium mb-2">Username</label>
+            <input
+              type="text"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              className="input"
+              required
+            />
+          </div>
+          <div className="mb-4">
+            <label className="block text-gray-700 font-medium mb-2">Password</label>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="input"
+              required
+            />
+          </div>
+          <button type="submit" className="btn-primary w-full">Login</button>
+        </form>
+      </div>
     </div>
   );
 }

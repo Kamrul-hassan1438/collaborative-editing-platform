@@ -54,44 +54,46 @@ function WorkspaceList() {
     }
   };
 
-  if (loading) return <div className="text-center p-6">Loading...</div>;
-  if (error && !workspaces.length) return <div className="text-red-500 text-center p-6">{error}</div>;
+  if (loading) return <div className="text-center p-6 text-gray-500">Loading...</div>;
+  if (error && !workspaces.length) return <div className="error text-center p-6">{error}</div>;
 
   return (
-    <div className="max-w-4xl mx-auto bg-white p-6 rounded-lg shadow-md">
-      <h2 className="text-2xl font-bold mb-4">Workspaces</h2>
-      {error && <p className="text-red-500 mb-4">{error}</p>}
-      <form onSubmit={handleWorkspaceSubmit} className="mb-6">
-        <div className="mb-4">
-          <label className="block text-gray-700">New Workspace Name</label>
-          <input
-            type="text"
-            value={newWorkspaceName}
-            onChange={(e) => setNewWorkspaceName(e.target.value)}
-            className="w-full p-2 border rounded"
-            placeholder="Enter workspace name"
-            required
-          />
-        </div>
-        <button type="submit" className="w-full bg-blue-600 text-white p-2 rounded">
-          Create Workspace
-        </button>
-      </form>
-      {workspaces.length === 0 ? (
-        <p className="text-gray-500">No workspaces available</p>
-      ) : (
-        <ul>
-          {workspaces.map((workspace) => (
-            <li
-              key={workspace.id}
-              className="p-2 border-b cursor-pointer hover:bg-gray-100"
-              onClick={() => navigate(`/workspaces/${workspace.id}`)}
-            >
-              {workspace.name} (Owner: {workspace.owner?.username || 'Unknown'})
-            </li>
-          ))}
-        </ul>
-      )}
+    <div className="container py-8">
+      <div className="card">
+        <h2 className="text-3xl font-bold mb-6 text-gray-800">Workspaces</h2>
+        {error && <p className="error">{error}</p>}
+        <form onSubmit={handleWorkspaceSubmit} className="mb-8">
+          <div className="mb-4">
+            <label className="block text-gray-700 font-medium mb-2">New Workspace Name</label>
+            <input
+              type="text"
+              value={newWorkspaceName}
+              onChange={(e) => setNewWorkspaceName(e.target.value)}
+              className="input"
+              placeholder="Enter workspace name"
+              required
+            />
+          </div>
+          <button type="submit" className="btn-primary w-full">
+            Create Workspace
+          </button>
+        </form>
+        {workspaces.length === 0 ? (
+          <p className="text-gray-500">No workspaces available</p>
+        ) : (
+          <ul className="space-y-2">
+            {workspaces.map((workspace) => (
+              <li
+                key={workspace.id}
+                className="p-3 bg-gray-50 rounded-lg cursor-pointer hover:bg-gray-100 transition-colors"
+                onClick={() => navigate(`/workspaces/${workspace.id}`)}
+              >
+                {workspace.name} <span className="text-gray-500 text-sm">(Owner: {workspace.owner?.username || 'Unknown'})</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </div>
   );
 }

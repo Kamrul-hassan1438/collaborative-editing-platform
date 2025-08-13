@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import axios from 'axios';
@@ -13,7 +12,7 @@ function JoinWorkspace() {
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const roleFromLink = params.get('role');
-    if (roleFromLink === 'viewer' || roleFromLink === 'member') {
+    if (roleFromLink === 'viewer' || roleFromLink === 'editor') {
       setRole(roleFromLink);
     }
   }, [location.search]);
@@ -33,23 +32,25 @@ function JoinWorkspace() {
   };
 
   return (
-    <div className="max-w-md mx-auto bg-white p-6 rounded-lg shadow-md">
-      <h2 className="text-2xl font-bold mb-4">Join Workspace</h2>
-      {error && <p className="text-red-500">{error}</p>}
-      <form onSubmit={handleJoin}>
-        <div className="mb-4">
-          <label className="block text-gray-700">Role</label>
-          <input
-            type="text"
-            value={role === 'member' ? 'Editor' : 'Viewer'}
-            readOnly
-            className="w-full p-2 border rounded bg-gray-100"
-          />
-        </div>
-        <button type="submit" className="w-full bg-blue-600 text-white p-2 rounded">
-          Join Workspace
-        </button>
-      </form>
+    <div className="container py-8">
+      <div className="card max-w-md mx-auto">
+        <h2 className="text-3xl font-bold mb-6 text-gray-800">Join Workspace</h2>
+        {error && <p className="error">{error}</p>}
+        <form onSubmit={handleJoin}>
+          <div className="mb-6">
+            <label className="block text-gray-700 font-medium mb-2">Role</label>
+            <input
+              type="text"
+              value={role === 'editor' ? 'Editor' : 'Viewer'}
+              readOnly
+              className="input bg-gray-100"
+            />
+          </div>
+          <button type="submit" className="btn-primary w-full">
+            Join Workspace
+          </button>
+        </form>
+      </div>
     </div>
   );
 }
