@@ -4,6 +4,9 @@ from users.models import User
 from .models import DocumentVersion
 from pymongo import MongoClient
 from django.conf import settings
+from bson import ObjectId
+
+
 
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
@@ -113,6 +116,9 @@ class CommentSerializer(serializers.ModelSerializer):
         validated_data['document_id'] = self.context['document_id']
         return super().create(validated_data)
 
+
+
+
 class DocumentVersionSerializer(serializers.ModelSerializer):
     user = UserSerializer(read_only=True)
     content = serializers.SerializerMethodField()
@@ -123,9 +129,16 @@ class DocumentVersionSerializer(serializers.ModelSerializer):
         read_only_fields = ['document', 'user', 'version_number', 'created_at']
 
     def get_content(self, obj):
-        client = MongoClient(settings.MONGO_URI)
-        db = client[settings.MONGO_DB_NAME]
-        version_data = db['document_versions'].find_one({'_id': obj.mongo_version_id})
-        client.close()
-        return version_data['content'] if version_data else {"blocks": [{"text": ""}]}
-    
+        try:
+            client = MongoClient(settings.MONGO_URI)
+            db = client[settings.MONGO_DB_NAME]
+            version_data = db['document_versions'].find_one({'_id': ObjectId(obj.mongo_version_id)})
+            client.close()
+            if version_data and 'content' in version_data:
+                content = version_data['content']
+                return content if isinstance(content, str) else content.get('blocks', [{}])[0].get('text', '')
+            return ''
+        except Exception as e:
+            print(f"Error fetching version content: {str(e)}")
+            return ''
+

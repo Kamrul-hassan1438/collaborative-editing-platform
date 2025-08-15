@@ -64,7 +64,7 @@ class DocumentConsumer(AsyncWebsocketConsumer):
             new_content = content['blocks'][0].get('text', '') if content['blocks'] else ''
             diff = list(difflib.ndiff(old_content.splitlines(), new_content.splitlines())) if old_content != new_content else []
 
-            print(f"Diff computed: {diff}")
+            
 
             # Do not save document here; rely on explicit API calls
             await self.channel_layer.group_send(

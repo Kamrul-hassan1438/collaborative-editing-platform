@@ -15,6 +15,7 @@ from .models import DocumentVersion
 from pymongo import MongoClient
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
+from bson import ObjectId
 
 logger = logging.getLogger(__name__)
 
@@ -319,23 +320,25 @@ class LastFivePagination(PageNumberPagination):
     page_size_query_param = 'page_size'
     max_page_size = 50
 
-class DocumentVersionView(APIView):
+class DocumentVersionView(APIView, LastFivePagination):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request, document_id):
         document = get_object_or_404(Document, pk=document_id)
+
         if not WorkspaceMember.objects.filter(workspace=document.workspace, user=request.user).exists():
             logger.warning(
                 f"Permission denied for user {request.user.username} on document {document_id}"
             )
             return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
-        versions = DocumentVersion.objects.filter(document_id=document_id) \
-                                         .order_by('-created_at')[:5]
-        versions = list(versions)[::-1]
-        if not versions:
-            return Response({'message': 'No versions found for this document'}, status=status.HTTP_200_OK)
-        serializer = DocumentVersionSerializer(versions, many=True)
-        return Response(serializer.data)
+
+        versions_qs = DocumentVersion.objects.filter(document_id=document_id).order_by('-created_at')
+
+        # Use DRF pagination
+        results = self.paginate_queryset(versions_qs, request, view=self)
+        serializer = DocumentVersionSerializer(results, many=True)
+        return self.get_paginated_response(serializer.data)
+
 
 class DocumentVersionDetailView(APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -349,6 +352,70 @@ class DocumentVersionDetailView(APIView):
         serializer = DocumentVersionSerializer(version)
         return Response(serializer.data)
 
+
+class DocumentSaveVersionView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, document_id):
+        document = get_object_or_404(Document, pk=document_id)
+        if not document.workspace.members.filter(user=request.user, role__in=['owner', 'editor']).exists():
+            logger.warning(f"Permission denied for user {request.user.username} on document {document_id}")
+            return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+        
+        content = request.data.get('content')
+        logger.info(f"Received save version request for document {document_id}: {content}")
+        
+        if not content or not isinstance(content, dict) or not content.get('blocks') or not content['blocks'][0].get('text', '').strip():
+            logger.error(f"Invalid or empty content for document {document_id}: {content}")
+            return Response({'error': 'Content cannot be empty'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            client = MongoClient(settings.MONGO_URI)
+            db = client[settings.MONGO_DB_NAME]
+            mongo_version_id = db['document_versions'].insert_one({
+                'document_id': document_id,
+                'content': content,
+                'user_id': request.user.id,
+                'created_at': document._get_current_time()
+            }).inserted_id
+            client.close()
+            
+            version_number = DocumentVersion.objects.filter(document_id=document_id).count() + 1
+            version = DocumentVersion.objects.create(
+                document=document,
+                user=request.user,
+                version_number=version_number,
+                mongo_version_id=str(mongo_version_id)
+            )
+            
+            document.content = content
+            document._user = request.user
+            document.save(create_version=False)
+            
+            channel_layer = get_channel_layer()
+            async_to_sync(channel_layer.group_send)(
+                f'document_{document_id}',
+                {
+                    'type': 'document_update',
+                    'message': {
+                        'content': content,
+                        'version_id': version.id,
+                        'version_number': version_number,
+                        'user_id': request.user.id,
+                        'user': request.user.username,
+                        'created_at': version.created_at.isoformat()
+                    }
+                }
+            )
+            
+            logger.info(f"Version {version_number} saved for document {document_id}")
+            return Response(DocumentSerializer(document).data, status=status.HTTP_201_CREATED)
+        except Exception as e:
+            logger.error(f"Error saving version for document {document_id}: {str(e)}")
+            return Response({'error': 'Failed to save version'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+
 class DocumentRevertView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -358,31 +425,45 @@ class DocumentRevertView(APIView):
             logger.warning(f"Permission denied for user {request.user.username} on document {document_id}")
             return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
         version = get_object_or_404(DocumentVersion, pk=version_id, document_id=document_id)
-        client = MongoClient(settings.MONGO_URI)
-        db = client[settings.MONGO_DB_NAME]
-        version_data = db['document_versions'].find_one({'_id': version.mongo_version_id})
-        client.close()
-        if not version_data:
-            logger.error(f"Version {version_id} content not found in MongoDB")
-            return Response({'error': 'Version content not found'}, status=status.HTTP_404_NOT_FOUND)
-        
-        document.content = version_data['content']
-        document._user = request.user
-        document.save(create_version=False)
-        
-        channel_layer = get_channel_layer()
-        async_to_sync(channel_layer.group_send)(
-            f'document_{document_id}',
-            {
-                'type': 'document_update',
-                'message': {
-                    'content': document.content,
-                    'version_number': version.version_number
+        try:
+            client = MongoClient(settings.MONGO_URI)
+            db = client[settings.MONGO_DB_NAME]
+            version_data = db['document_versions'].find_one({'_id': ObjectId(version.mongo_version_id)})
+            client.close()
+            if not version_data or 'content' not in version_data:
+                logger.error(f"Version {version_id} content not found in MongoDB")
+                return Response({'error': 'Version content not found'}, status=status.HTTP_404_NOT_FOUND)
+            
+            content = version_data['content']
+            document.content = (
+                content if isinstance(content, str) 
+                else content.get('blocks', [{}])[0].get('text', '')
+            )
+            document._user = request.user
+            document.save(create_version=False)
+            
+            channel_layer = get_channel_layer()
+            async_to_sync(channel_layer.group_send)(
+                f'document_{document_id}',
+                {
+                    'type': 'document_update',
+                    'message': {
+                        'content': document.content,
+                        'version_number': version.version_number,
+                        'user_id': request.user.id,
+                        'user': request.user.username,
+                    }
                 }
-            }
-        )
-        
-        return Response(DocumentSerializer(document).data, status=status.HTTP_200_OK)
+            )
+            
+            return Response(DocumentSerializer(document).data, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.error(f"Revert error for version {version_id}: {str(e)}")
+            return Response({'error': 'Failed to revert version'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+
+
 
 class SaveDocumentVersionView(APIView):
     permission_classes = [permissions.IsAuthenticated]

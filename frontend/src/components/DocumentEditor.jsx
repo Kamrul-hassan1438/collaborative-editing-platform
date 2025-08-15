@@ -2,28 +2,27 @@ import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import axios from "../axios";
 import ReconnectingWebSocket from "reconnecting-websocket";
-import ReactDiffViewer from "react-diff-viewer-continued";
+import VersionHistorySidebar from "./VersionHistorySidebar";
+import CommentsSidebar from "./CommentsSidebar";
 
 function DocumentEditor() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [document, setDocument] = useState(null);
-  const [content, setContent] = useState({ blocks: [{ text: "" }] });
+  const [content, setContent] = useState("");
   const [comments, setComments] = useState([]);
   const [versions, setVersions] = useState([]);
-  const [selectedVersion, setSelectedVersion] = useState(null);
-  const [newComment, setNewComment] = useState("");
-  const [file, setFile] = useState(null);
   const [error, setError] = useState("");
   const [docWs, setDocWs] = useState(null);
   const [commentWs, setCommentWs] = useState(null);
   const [isViewer, setIsViewer] = useState(false);
-  const [showAllVersions, setShowAllVersions] = useState(false);
   const [unsavedChanges, setUnsavedChanges] = useState(false);
-  const [localHistory, setLocalHistory] = useState([]);
-  const [historyIndex, setHistoryIndex] = useState(-1);
-  const textareaRef = useRef(null);
-  const isNavigating = useRef(false);
+  const [undoStack, setUndoStack] = useState([]);
+  const [redoStack, setRedoStack] = useState([]);
+  const [showSaveModal, setShowSaveModal] = useState(false);
+  const [activeSidebar, setActiveSidebar] = useState(null); // Replaced showVersionSidebar and showCommentsSidebar
+  const navigatePath = useRef(null);
+  const isSaving = useRef(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -39,23 +38,19 @@ function DocumentEditor() {
 
         const docResponse = await axios.get(
           `http://localhost:8000/api/documents/${id}/`,
-          {
-            headers: { Authorization: `Bearer ${token}` },
-          }
+          { headers: { Authorization: `Bearer ${token}` } }
         );
         const [commentsResponse, versionsResponse, memberResponse] =
           await Promise.all([
             axios.get(`http://localhost:8000/api/documents/${id}/comments/`, {
               headers: { Authorization: `Bearer ${token}` },
             }),
-            axios.get(`http://localhost:8000/api/documents/${id}/versions/`, {
+            axios.get(`http://localhost:8000/api/documents/${id}/versions/?page=1`, {
               headers: { Authorization: `Bearer ${token}` },
             }),
             axios.get(
               `http://localhost:8000/api/workspaces/${docResponse.data.workspace.id}/members/`,
-              {
-                headers: { Authorization: `Bearer ${token}` },
-              }
+              { headers: { Authorization: `Bearer ${token}` } }
             ),
           ]);
 
@@ -65,21 +60,24 @@ function DocumentEditor() {
           console.log("Versions:", versionsResponse.data);
           console.log("Members:", memberResponse.data);
           const validContent =
-            docResponse.data.content &&
-            Array.isArray(docResponse.data.content.blocks) &&
-            docResponse.data.content.blocks.length > 0
+            typeof docResponse.data.content === "string"
               ? docResponse.data.content
-              : { blocks: [{ text: "" }] };
+              : docResponse.data.content?.blocks?.[0]?.text || "";
           setDocument({ ...docResponse.data, content: validContent });
           setContent(validContent);
-          setLocalHistory([validContent]);
-          setHistoryIndex(0);
+          setUndoStack([validContent]);
           setComments(commentsResponse.data || []);
           setVersions(versionsResponse.data || []);
           const userMember = memberResponse.data.find(
             (m) => m.user.id === parseInt(userId)
           );
           setIsViewer(userMember?.role === "viewer");
+          const savedContent = localStorage.getItem(`unsaved_document_${id}`);
+          if (savedContent) {
+            setContent(savedContent);
+            setUndoStack([savedContent]);
+            setUnsavedChanges(true);
+          }
         }
       } catch (err) {
         if (isMounted) {
@@ -101,45 +99,53 @@ function DocumentEditor() {
     }
 
     const docWebsocket = new ReconnectingWebSocket(
-      `ws://localhost:8000/ws/documents/${id}/?token=${token}`
+      `ws://localhost:8000/ws/documents/${id}/?token=${token}`,
+      [],
+      { maxReconnectionDelay: 10000, minReconnectionDelay: 1000, reconnectionDelayGrowFactor: 1.5 }
     );
     const commentWebsocket = new ReconnectingWebSocket(
-      `ws://localhost:8000/ws/comments/${id}/?token=${token}`
+      `ws://localhost:8000/ws/comments/${id}/?token=${token}`,
+      [],
+      { maxReconnectionDelay: 10000, minReconnectionDelay: 1000, reconnectionDelayGrowFactor: 1.5 }
     );
 
-    docWebsocket.onopen = () => console.log("Document WebSocket connected");
-    docWebsocket.onmessage = (e) => {
+    docWebsocket.onopen = () => {
+      console.log("Document WebSocket connected");
+    };
+    docWebsocket.onmessage = async (e) => {
       const data = JSON.parse(e.data);
       console.log("WebSocket document message:", data);
-      if (isMounted) {
+      if (isMounted && !isSaving.current) {
         if (data.error) {
           setError(data.error);
-        } else if (
-          data.content &&
-          Array.isArray(data.content.blocks) &&
-          data.content.blocks.length > 0
-        ) {
-          // Only update if not the current user's change to avoid overwriting local edits
-          if (data.user_id !== parseInt(localStorage.getItem("user_id"))) {
-            setContent(data.content);
-            setDocument((prev) => ({ ...prev, content: data.content }));
-            setLocalHistory((prev) => {
-              const newHistory = [...prev.slice(0, historyIndex + 1), data.content];
-              return newHistory.slice(-50); // Keep last 50 versions
-            });
-            setHistoryIndex((prev) => prev + 1);
+        } else if (data.content) {
+          const newContent =
+            typeof data.content === "string"
+              ? data.content
+              : data.content?.blocks?.[0]?.text || "";
+          if (
+            data.user_id !== parseInt(localStorage.getItem("user_id")) &&
+            newContent !== content
+          ) {
+            setContent(newContent);
+            setDocument((prev) => ({ ...prev, content: newContent }));
+            setUndoStack((prev) => [...prev, newContent].slice(-50));
+            setRedoStack([]);
+            setUnsavedChanges(true);
+            localStorage.setItem(`unsaved_document_${id}`, newContent);
           }
           if (data.version_number) {
-            setVersions((prev) => [
-              ...prev.filter((v) => v.version_number !== data.version_number),
-              {
-                id: data.version_id || data.version_number,
-                version_number: data.version_number,
-                user: { username: data.user || "Unknown" },
-                created_at: data.created_at,
-                content: data.content,
-              },
-            ].sort((a, b) => b.version_number - a.version_number));
+            try {
+              const token = localStorage.getItem("access_token");
+              const versionsResponse = await axios.get(
+                `http://localhost:8000/api/documents/${id}/versions/?page=1`,
+                { headers: { Authorization: `Bearer ${token}` } }
+              );
+              setVersions(versionsResponse.data.results || []);
+            } catch (err) {
+              console.error("Versions Refresh Error:", err.response?.data || err.message);
+              setError("Failed to refresh versions");
+            }
           }
         } else {
           console.warn("Invalid WebSocket content:", data);
@@ -147,7 +153,20 @@ function DocumentEditor() {
         }
       }
     };
+    docWebsocket.onclose = (e) => {
+      console.log("Document WebSocket closed:", e.code, e.reason, new Date());
+      if (e.code === 4001) setError("Authentication required");
+      if (e.code === 4003) setError("Permission denied: You are not a workspace member");
+      if (e.code === 4004) setError("Document not found");
+    };
+    docWebsocket.onerror = (e) => {
+      console.error("Document WebSocket error:", e);
+      setError("WebSocket connection error");
+    };
 
+    commentWebsocket.onopen = () => {
+      console.log("Comment WebSocket connected");
+    };
     commentWebsocket.onmessage = (e) => {
       const data = JSON.parse(e.data);
       console.log("WebSocket comment message:", data);
@@ -163,20 +182,15 @@ function DocumentEditor() {
         }
       }
     };
-
-    docWebsocket.onclose = (e) => {
-      console.log("Document WebSocket closed:", e.code, e.reason);
+    commentWebsocket.onclose = (e) => {
+      console.log("Comment WebSocket closed:", e.code, e.reason, new Date());
       if (e.code === 4001) setError("Authentication required");
-      if (e.code === 4003)
-        setError("Permission denied: You are not a workspace member");
+      if (e.code === 4003) setError("Permission denied: You are not a workspace member");
       if (e.code === 4004) setError("Document not found");
     };
-    commentWebsocket.onclose = (e) => {
-      console.log("Comment WebSocket closed:", e.code, e.reason);
-      if (e.code === 4001) setError("Authentication required");
-      if (e.code === 4003)
-        setError("Permission denied: You are not a workspace member");
-      if (e.code === 4004) setError("Document not found");
+    commentWebsocket.onerror = (e) => {
+      console.error("Comment WebSocket error:", e);
+      setError("WebSocket connection error");
     };
 
     setDocWs(docWebsocket);
@@ -191,73 +205,79 @@ function DocumentEditor() {
     window.addEventListener("keydown", handleKeyDown);
 
     const handleBeforeUnload = (e) => {
-      if (unsavedChanges && !isNavigating.current) {
+      if (unsavedChanges) {
         e.preventDefault();
-        return (e.returnValue =
-          "You have unsaved changes. Do you want to save a version before leaving?");
+        e.returnValue = "";
       }
     };
     window.addEventListener("beforeunload", handleBeforeUnload);
 
     return () => {
       isMounted = false;
-      docWebsocket.close();
-      commentWebsocket.close();
+      setTimeout(() => {
+        docWebsocket.close();
+        commentWebsocket.close();
+      }, 1000);
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("beforeunload", handleBeforeUnload);
     };
   }, [id]);
 
-  // Handle navigation with confirmation
-  const handleNavigation = async (path) => {
-    if (unsavedChanges && !isNavigating.current) {
-      isNavigating.current = true;
-      const shouldSave = window.confirm(
-        "You have unsaved changes. Do you want to save a version before leaving?"
-      );
-      if (shouldSave) {
-        try {
-          await handleSaveVersion();
-          navigate(path);
-        } catch (err) {
-          console.error("Navigation Save Error:", err);
-          setError("Failed to save before navigation");
-          isNavigating.current = false;
-        }
-      } else {
-        navigate(path);
-      }
+  useEffect(() => {
+    if (unsavedChanges && content.trim()) {
+      localStorage.setItem(`unsaved_document_${id}`, content);
+    }
+  }, [content, unsavedChanges, id]);
+
+  const handleNavigation = (path) => {
+    if (unsavedChanges) {
+      setShowSaveModal(true);
+      navigatePath.current = path;
     } else {
       navigate(path);
     }
   };
 
-  // Debounced content change handler
-  useEffect(() => {
-    const handler = setTimeout(() => {
-      if (unsavedChanges) {
-        setLocalHistory((prev) => {
-          const newHistory = [...prev.slice(0, historyIndex + 1), content];
-          return newHistory.slice(-50); // Keep last 50 versions
-        });
-        setHistoryIndex((prev) => prev + 1);
+  const handleModalConfirm = async (shouldSave) => {
+    setShowSaveModal(false);
+    if (shouldSave) {
+      try {
+        await handleSaveVersion();
+        if (navigatePath.current) {
+          navigate(navigatePath.current);
+          navigatePath.current = null;
+        }
+      } catch (err) {
+        console.error("Save Error:", err);
+        setError("Failed to save before navigation");
       }
-    }, 500); // Debounce for 500ms
-    return () => clearTimeout(handler);
-  }, [content, unsavedChanges, historyIndex]);
+    } else {
+      setUnsavedChanges(false);
+      setUndoStack([content]);
+      setRedoStack([]);
+      localStorage.removeItem(`unsaved_document_${id}`);
+      if (navigatePath.current) {
+        navigate(navigatePath.current);
+        navigatePath.current = null;
+      }
+    }
+  };
 
   const handleContentChange = (e) => {
     if (isViewer) {
       setError("Viewers cannot edit documents");
       return;
     }
-    const newContent = { blocks: [{ text: e.target.value || "" }] };
+    const newContent = e.target.value || "";
+    console.log("Content Change:", { oldContent: content, newContent });
+    setUndoStack((prev) => [...prev, content].slice(-50));
+    setRedoStack([]);
     setContent(newContent);
     setUnsavedChanges(true);
     if (docWs && docWs.readyState === WebSocket.OPEN) {
       docWs.send(
         JSON.stringify({
-          content: newContent,
+          content: { blocks: [{ text: newContent }] },
           user_id: parseInt(localStorage.getItem("user_id")),
         })
       );
@@ -269,197 +289,75 @@ function DocumentEditor() {
       setError("Viewers cannot save versions");
       return;
     }
+    if (!content.trim()) {
+      setError("Cannot save an empty document");
+      return;
+    }
+    if (isSaving.current) {
+      console.log("Save in progress, ignoring request");
+      return;
+    }
+    isSaving.current = true;
+    console.log("Saving version with content:", content);
     try {
       const response = await axios.post(
         `http://localhost:8000/api/documents/${id}/save_version/`,
-        { content },
+        { content: { blocks: [{ text: content }] } },
         {
           headers: {
             Authorization: `Bearer ${localStorage.getItem("access_token")}`,
           },
         }
       );
+      console.log("Save Version Response:", response.data);
       const versionsResponse = await axios.get(
-        `http://localhost:8000/api/documents/${id}/versions/`,
+        `http://localhost:8000/api/documents/${id}/versions/?page=1`,
         {
           headers: {
             Authorization: `Bearer ${localStorage.getItem("access_token")}`,
           },
         }
       );
-      setVersions(versionsResponse.data || []);
+      console.log("Versions Response:", versionsResponse.data);
+      setVersions(versionsResponse.data.results || []);
       setUnsavedChanges(false);
-      setLocalHistory([content]);
-      setHistoryIndex(0);
+      setUndoStack([content]);
+      setRedoStack([]);
+      localStorage.removeItem(`unsaved_document_${id}`);
       setError("");
       alert("Version saved successfully!");
     } catch (err) {
       console.error("Save Version Error:", err.response?.data || err.message);
       setError(err.response?.data?.error || "Failed to save version");
+    } finally {
+      isSaving.current = false;
     }
   };
 
   const handleUndo = () => {
-    if (historyIndex > 0) {
-      setHistoryIndex((prev) => prev - 1);
-      setContent(localHistory[historyIndex - 1]);
+    if (undoStack.length > 1) {
+      const currentContent = undoStack[undoStack.length - 1];
+      setRedoStack((prev) => [currentContent, ...prev].slice(0, 50));
+      setUndoStack((prev) => prev.slice(0, -1));
+      setContent(undoStack[undoStack.length - 2]);
       setUnsavedChanges(true);
     }
   };
 
   const handleRedo = () => {
-    if (historyIndex < localHistory.length - 1) {
-      setHistoryIndex((prev) => prev + 1);
-      setContent(localHistory[historyIndex + 1]);
+    if (redoStack.length > 0) {
+      const nextContent = redoStack[0];
+      setUndoStack((prev) => [...prev, content].slice(-50));
+      setRedoStack((prev) => prev.slice(1));
+      setContent(nextContent);
       setUnsavedChanges(true);
     }
   };
 
-  const handleCommentSubmit = async (e) => {
-    e.preventDefault();
-    if (isViewer) {
-      setError("Viewers cannot add comments");
-      return;
-    }
-    if (!newComment.trim()) {
-      setError("Comment cannot be empty");
-      return;
-    }
-    try {
-      const response = await axios.post(
-        `http://localhost:8000/api/documents/${id}/comments/`,
-        { content: newComment, document: id },
-        {
-          headers: {
-            Authorization: `Bearer ${localStorage.getItem("access_token")}`,
-          },
-        }
-      );
-      if (commentWs && commentWs.readyState === WebSocket.OPEN) {
-        commentWs.send(JSON.stringify({ comment: response.data }));
-      }
-      setNewComment("");
-      setError("");
-    } catch (err) {
-      console.error("Comment Error:", err.response?.data || err.message);
-      setError(err.response?.data?.error || "Failed to add comment");
-    }
+  // Toggle sidebar, ensuring only one is open at a time
+  const toggleSidebar = (sidebar) => {
+    setActiveSidebar(activeSidebar === sidebar ? null : sidebar);
   };
-
-  const handleCommentDelete = async (commentId) => {
-    if (isViewer) {
-      setError("Viewers cannot delete comments");
-      return;
-    }
-    try {
-      await axios.delete(`http://localhost:8000/api/comments/${commentId}/`, {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("access_token")}`,
-        },
-      });
-      if (commentWs && commentWs.readyState === WebSocket.OPEN) {
-        commentWs.send(JSON.stringify({ delete_comment_id: commentId }));
-      }
-      setError("");
-    } catch (err) {
-      console.error("Delete Comment Error:", err.response?.data || err.message);
-      setError(err.response?.data?.error || "Failed to delete comment");
-    }
-  };
-
-  const handleFileUpload = async (e) => {
-    e.preventDefault();
-    if (isViewer) {
-      setError("Viewers cannot upload attachments");
-      return;
-    }
-    if (!file) {
-      setError("No file selected");
-      return;
-    }
-    const formData = new FormData();
-    formData.append("file", file);
-    try {
-      const response = await axios.post(
-        `http://localhost:8000/api/documents/${id}/attachments/`,
-        formData,
-        {
-          headers: {
-            "Content-Type": "multipart/form-data",
-            Authorization: `Bearer ${localStorage.getItem("access_token")}`,
-          },
-        }
-      );
-      setFile(null);
-      setError("");
-      alert(`File uploaded: ${response.data.file_url}`);
-    } catch (err) {
-      console.error("Upload Error:", err.response?.data || err.message);
-      setError(err.response?.data?.error || "Failed to upload file");
-    }
-  };
-
-  const handleVersionSelect = async (versionId) => {
-    try {
-      const response = await axios.get(
-        `http://localhost:8000/api/documents/${id}/versions/${versionId}/`,
-        {
-          headers: {
-            Authorization: `Bearer ${localStorage.getItem("access_token")}`,
-          },
-        }
-      );
-      setSelectedVersion(
-        response.data &&
-          response.data.content &&
-          Array.isArray(response.data.content.blocks)
-          ? response.data
-          : { ...response.data, content: { blocks: [{ text: "" }] } }
-      );
-      setError("");
-    } catch (err) {
-      console.error("Version Select Error:", err.response?.data || err.message);
-      setError(err.response?.data?.error || "Failed to load version");
-    }
-  };
-
-  const handleRevertVersion = async (versionId) => {
-    if (isViewer) {
-      setError("Viewers cannot revert versions");
-      return;
-    }
-    try {
-      const response = await axios.post(
-        `http://localhost:8000/api/documents/${id}/revert/${versionId}/`,
-        {},
-        {
-          headers: {
-            Authorization: `Bearer ${localStorage.getItem("access_token")}`,
-          },
-        }
-      );
-      const validContent =
-        response.data.content && Array.isArray(response.data.content.blocks)
-          ? response.data.content
-          : { blocks: [{ text: "" }] };
-      setContent(validContent);
-      setDocument({ ...response.data, content: validContent });
-      setSelectedVersion(null);
-      setUnsavedChanges(false);
-      setLocalHistory([validContent]);
-      setHistoryIndex(0);
-      setError("");
-      alert("Version reverted successfully");
-    } catch (err) {
-      console.error("Revert Error:", err.response?.data || err.message);
-      setError(err.response?.data?.error || "Failed to revert version");
-    }
-  };
-
-  const safeVersions = Array.isArray(versions) ? versions : [];
-  const displayedVersions = showAllVersions
-    ? safeVersions
-    : safeVersions.slice(0, 5);
 
   if (!document && error)
     return <div className="error text-center">{error}</div>;
@@ -468,194 +366,122 @@ function DocumentEditor() {
     return <div className="text-center p-6 text-gray-500">Loading...</div>;
 
   return (
-    <div className="container py-8">
-      <div className="card">
-        <h2 className="text-3xl font-bold mb-6 text-gray-800">
-          {document.title}
-        </h2>
-        {error && <p className="text-red-500 mb-4">{error}</p>}
-        <div className="mb-4 flex items-center">
-          <button
-            onClick={() => handleNavigation("/workspaces")} // Example navigation
-            className="bg-gray-500 text-white px-4 py-2 rounded mr-2 hover:bg-gray-600"
-          >
-            Back
-          </button>
-          <button
-            onClick={handleUndo}
-            disabled={historyIndex <= 0}
-            className="bg-gray-500 text-white px-4 py-2 rounded mr-2 hover:bg-gray-600 disabled:opacity-50"
-          >
-            Undo
-          </button>
-          <button
-            onClick={handleRedo}
-            disabled={historyIndex >= localHistory.length - 1}
-            className="bg-gray-500 text-white px-4 py-2 rounded mr-2 hover:bg-gray-600 disabled:opacity-50"
-          >
-            Redo
-          </button>
-          {!isViewer && (
-            <button
-              onClick={handleSaveVersion}
-              className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
-            >
-              Save Version (Ctrl+S)
-            </button>
-          )}
-        </div>
-        <div className="mb-6">
-          <textarea
-            ref={textareaRef}
-            value={content.blocks[0]?.text || ""}
-            onChange={handleContentChange}
-            className="textarea h-96 text-lg w-full border rounded-lg p-4"
-            placeholder="Document content..."
-            readOnly={isViewer}
-          />
-        </div>
-        <div className="mb-6">
-          <h3 className="text-xl font-semibold mb-4 text-gray-800">
-            Version History
-          </h3>
-          <ul className="space-y-2">
-            {displayedVersions.map((version) => (
-              <li
-                key={version.id}
-                className="p-3 bg-gray-50 rounded-lg flex justify-between items-center"
-              >
-                <span>
-                  Version {version.version_number} by{" "}
-                  {version.user?.username || "Unknown"} (
-                  {new Date(version.created_at).toLocaleString()})
-                </span>
+    <div className="flex min-h-screen bg-gray-100">
+      {/* Main Editor */}
+      <div className="flex-1 p-8">
+        <div className="container">
+          <div className="card">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-3xl font-bold text-gray-800">{document.title}</h2>
+              <div className="flex space-x-2">
                 <button
-                  onClick={() => handleVersionSelect(version.id)}
-                  className="bg-blue-500 text-white text-sm px-3 py-1 rounded hover:bg-blue-600"
+                  onClick={() => toggleSidebar("versions")}
+                  className="btn-primary"
                 >
-                  View
+                  {activeSidebar === "versions" ? "Hide Versions" : "Show Versions"}
                 </button>
-              </li>
-            ))}
-          </ul>
-          {safeVersions.length > 5 && (
-            <button
-              onClick={() => setShowAllVersions(!showAllVersions)}
-              className="mt-3 text-blue-500 hover:underline"
-            >
-              {showAllVersions
-                ? "Show Less"
-                : `Show ${safeVersions.length - 5} More`}
-            </button>
-          )}
-          {selectedVersion && (
-            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-              <div className="bg-white rounded-lg p-6 w-full max-w-4xl max-h-[80vh] overflow-auto">
-                <div className="flex justify-between items-center mb-4">
-                  <h4 className="text-lg font-semibold">
-                    Version {selectedVersion.version_number} Diff
-                  </h4>
-                  <button
-                    onClick={() => setSelectedVersion(null)}
-                    className="text-gray-500 hover:text-gray-700"
-                  >
-                    Close
-                  </button>
-                </div>
-                <ReactDiffViewer
-                  oldValue={selectedVersion.content?.blocks?.[0]?.text || ""}
-                  newValue={content.blocks?.[0]?.text || ""}
-                  splitView={true}
-                  leftTitle={`Version ${selectedVersion.version_number}`}
-                  rightTitle="Current Version"
-                  styles={{
-                    variables: {
-                      light: {
-                        diffViewerBackground: "#fff",
-                        codeFoldBackground: "#f7fafc",
-                        diffViewerTitleBackground: "#edf2f7",
-                      },
-                      dark: {
-                        diffViewerBackground: "#2d3748",
-                        codeFoldBackground: "#1a202c",
-                        diffViewerTitleBackground: "#4a5568",
-                      },
-                    },
-                  }}
-                />
-                {!isViewer && (
-                  <button
-                    onClick={() => handleRevertVersion(selectedVersion.id)}
-                    className="bg-green-500 text-white px-4 py-2 rounded mt-3 hover:bg-green-600"
-                  >
-                    Revert to this Version
-                  </button>
-                )}
+                <button
+                  onClick={() => toggleSidebar("comments")}
+                  className="btn-primary"
+                >
+                  {activeSidebar === "comments" ? "Hide Comments" : "Show Comments"}
+                </button>
               </div>
             </div>
-          )}
-        </div>
-        <div className="mb-6">
-          <h3 className="text-xl font-semibold mb-4 text-gray-800">Comments</h3>
-          {!isViewer && (
-            <form onSubmit={handleCommentSubmit} className="mb-6">
-              <textarea
-                value={newComment}
-                onChange={(e) => setNewComment(e.target.value)}
-                className="textarea h-32 w-full border rounded-lg p-4"
-                placeholder="Add a comment..."
-              />
+            {error && <p className="error">{error}</p>}
+            <div className="mb-4 flex items-center space-x-2">
               <button
-                type="submit"
-                className="bg-blue-500 text-white px-4 py-2 rounded mt-3 w-full hover:bg-blue-600"
+                onClick={() => handleNavigation("/dashboard")}
+                className="btn-secondary"
               >
-                Add Comment
+                Back
               </button>
-            </form>
-          )}
-          <div className="space-y-4">
-            {comments.map((comment) => (
-              <div key={comment.id} className="border-b border-gray-200 pb-4">
-                <p className="text-gray-700">
-                  <strong className="text-gray-900">
-                    {comment.user.username}
-                  </strong>
-                  : {comment.content}
-                </p>
-                {!isViewer && (
-                  <button
-                    onClick={() => handleCommentDelete(comment.id)}
-                    className="text-red-500 text-sm hover:underline mt-1"
-                  >
-                    Delete
-                  </button>
-                )}
-              </div>
-            ))}
+              <button
+                onClick={handleUndo}
+                disabled={undoStack.length <= 1}
+                className={undoStack.length <= 1 ? "btn-disabled" : "btn-secondary"}
+              >
+                Undo
+              </button>
+              <button
+                onClick={handleRedo}
+                disabled={redoStack.length === 0}
+                className={redoStack.length === 0 ? "btn-disabled" : "btn-secondary"}
+              >
+                Redo
+              </button>
+              {!isViewer && (
+                <button
+                  onClick={handleSaveVersion}
+                  className="btn-primary"
+                >
+                  Save Version (Ctrl+S)
+                </button>
+              )}
+            </div>
+            <textarea
+              value={content}
+              onChange={handleContentChange}
+              className="textarea h-96 text-lg"
+              placeholder="Document content..."
+              readOnly={isViewer}
+            />
           </div>
         </div>
-        {!isViewer && (
-          <form onSubmit={handleFileUpload} className="mb-6">
-            <div className="mb-4">
-              <label className="block text-gray-700 font-medium mb-2">
-                Upload Attachment
-              </label>
-              <input
-                type="file"
-                onChange={(e) => setFile(e.target.files[0])}
-                className="border rounded-lg p-2 w-full"
-                accept="image/*,.pdf"
-              />
-            </div>
-            <button
-              type="submit"
-              className="bg-blue-500 text-white px-4 py-2 rounded w-full hover:bg-blue-600"
-            >
-              Upload Attachment
-            </button>
-          </form>
-        )}
       </div>
+
+      {/* Sidebars */}
+      <VersionHistorySidebar
+        isOpen={activeSidebar === "versions"}
+        versions={versions}
+        isViewer={isViewer}
+        documentId={id}
+        currentContent={content}
+        setError={setError}
+        setContent={setContent}
+        setDocument={setDocument}
+        setUnsavedChanges={setUnsavedChanges}
+        setUndoStack={setUndoStack}
+        setRedoStack={setRedoStack}
+        setVersions={setVersions}
+        onClose={() => setActiveSidebar(null)} // Added close handler
+      />
+      <CommentsSidebar
+        isOpen={activeSidebar === "comments"}
+        comments={comments}
+        isViewer={isViewer}
+        documentId={id}
+        commentWs={commentWs}
+        setComments={setComments}
+        setError={setError}
+        onClose={() => setActiveSidebar(null)}
+      />
+
+      {/* Save Modal */}
+      {showSaveModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="card w-full max-w-md">
+            <h3 className="text-lg font-semibold mb-4">Unsaved Changes</h3>
+            <p className="text-gray-700 mb-6">
+              You have unsaved changes. Would you like to save a version before leaving?
+            </p>
+            <div className="flex justify-end space-x-3">
+              <button
+                onClick={() => handleModalConfirm(false)}
+                className="btn-secondary"
+              >
+                Don't Save
+              </button>
+              <button
+                onClick={() => handleModalConfirm(true)}
+                className="btn-primary"
+              >
+                Save and Leave
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
