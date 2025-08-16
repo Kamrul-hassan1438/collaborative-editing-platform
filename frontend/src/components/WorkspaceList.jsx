@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
+import Modal from './Modal';
 
 function WorkspaceList() {
   const [workspaces, setWorkspaces] = useState([]);
   const [newWorkspaceName, setNewWorkspaceName] = useState('');
+  const [showCreateModal, setShowCreateModal] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
@@ -47,6 +49,7 @@ function WorkspaceList() {
       );
       setWorkspaces([...workspaces, response.data]);
       setNewWorkspaceName('');
+      setShowCreateModal(false);
       setError('');
       navigate(`/workspaces/${response.data.id}`);
     } catch (err) {
@@ -54,17 +57,43 @@ function WorkspaceList() {
     }
   };
 
-  if (loading) return <div className="text-center p-6 text-gray-500">Loading...</div>;
+  if (loading) return <div className="text-center p-6 text-gray-500 dark:text-gray-400">Loading...</div>;
   if (error && !workspaces.length) return <div className="error text-center p-6">{error}</div>;
 
   return (
     <div className="container py-8">
       <div className="card">
-        <h2 className="text-3xl font-bold mb-6 text-gray-800">Workspaces</h2>
+        <div className="flex justify-between items-center mb-6">
+          <h2 className="text-3xl font-bold text-gray-800 dark:text-gray-100">Workspaces</h2>
+          <button onClick={() => setShowCreateModal(true)} className="btn-primary flex items-center">
+            <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
+            </svg>
+            Create Workspace
+          </button>
+        </div>
         {error && <p className="error">{error}</p>}
-        <form onSubmit={handleWorkspaceSubmit} className="mb-8">
+        {workspaces.length === 0 ? (
+          <p className="text-gray-500 dark:text-gray-400">No workspaces available</p>
+        ) : (
+          <ul className="space-y-2">
+            {workspaces.map((workspace) => (
+              <li
+                key={workspace.id}
+                className="p-3 bg-gray-50 dark:bg-gray-700 rounded-lg cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors"
+                onClick={() => navigate(`/workspaces/${workspace.id}`)}
+              >
+                {workspace.name} <span className="text-gray-500 dark:text-gray-400 text-sm">(Owner: {workspace.owner?.username || 'Unknown'})</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <Modal isOpen={showCreateModal} onClose={() => setShowCreateModal(false)} title="Create New Workspace">
+        <form onSubmit={handleWorkspaceSubmit}>
           <div className="mb-4">
-            <label className="block text-gray-700 font-medium mb-2">New Workspace Name</label>
+            <label className="block text-gray-700 dark:text-gray-300 font-medium mb-2">Workspace Name</label>
             <input
               type="text"
               value={newWorkspaceName}
@@ -75,25 +104,10 @@ function WorkspaceList() {
             />
           </div>
           <button type="submit" className="btn-primary w-full">
-            Create Workspace
+            Create
           </button>
         </form>
-        {workspaces.length === 0 ? (
-          <p className="text-gray-500">No workspaces available</p>
-        ) : (
-          <ul className="space-y-2">
-            {workspaces.map((workspace) => (
-              <li
-                key={workspace.id}
-                className="p-3 bg-gray-50 rounded-lg cursor-pointer hover:bg-gray-100 transition-colors"
-                onClick={() => navigate(`/workspaces/${workspace.id}`)}
-              >
-                {workspace.name} <span className="text-gray-500 text-sm">(Owner: {workspace.owner?.username || 'Unknown'})</span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
+      </Modal>
     </div>
   );
 }

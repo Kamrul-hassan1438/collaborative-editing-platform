@@ -19,6 +19,7 @@ function VersionHistorySidebar({
 }) {
   const [selectedVersionIndex, setSelectedVersionIndex] = useState(null);
   const [isDiffOpen, setIsDiffOpen] = useState(false);
+  const [diffClosing, setDiffClosing] = useState(false);
   const [diffData, setDiffData] = useState({
     oldValue: "",
     versionNumber: null,
@@ -109,7 +110,7 @@ function VersionHistorySidebar({
       setRedoStack([]);
       localStorage.removeItem(`unsaved_document_${documentId}`);
       setError("");
-      setIsDiffOpen(false);
+      handlePopupClose();
       alert("Version reverted successfully");
     } catch (err) {
       console.error("Revert Error:", err.response?.data || err.message);
@@ -162,6 +163,14 @@ function VersionHistorySidebar({
     await fetchPage(page + 1);
   };
 
+  const handlePopupClose = () => {
+    setDiffClosing(true);
+    setTimeout(() => {
+      setIsDiffOpen(false);
+      setDiffClosing(false);
+    }, 300);
+  };
+
   if (!isOpen) return null;
 
   const safeVersions = Array.isArray(versions) ? versions : [];
@@ -176,23 +185,21 @@ function VersionHistorySidebar({
         </div>
         <div className="flex-1 overflow-y-auto">
           {safeVersions.length === 0 ? (
-            <p className="text-gray-500">No versions available</p>
+            <p className="text-gray-500 dark:text-gray-400">No versions available</p>
           ) : (
             <ul className="space-y-2">
               {safeVersions.map((version, index) => (
                 <li
                   key={version.id}
-                  className={`p-3 rounded-lg cursor-pointer ${
-                    selectedVersionIndex === index
-                      ? "bg-blue-100"
-                      : "bg-gray-50 hover:bg-gray-100"
+                  className={`p-3 rounded-lg cursor-pointer bg-gray-50 dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600 ${
+                    selectedVersionIndex === index ? "bg-blue-100 dark:bg-blue-900" : ""
                   }`}
                   onClick={() => handleVersionSelect(version.id, index)}
                 >
                   <p className="font-medium">
                     Version {version.version_number} by {version.user?.username || "Unknown"}
                   </p>
-                  <p className="text-sm text-gray-500">
+                  <p className="text-sm text-gray-500 dark:text-gray-400">
                     {new Date(version.created_at).toLocaleString()}
                   </p>
                 </li>
@@ -200,29 +207,30 @@ function VersionHistorySidebar({
             </ul>
           )}
         </div>
-        <div className="pt-3 border-t mt-3 flex items-center justify-between">
+        <div className="pt-3 border-t mt-3 flex items-center justify-between border-gray-200 dark:border-gray-700">
           <button
             onClick={goToPreviousPage}
             disabled={!hasPrev}
-            className="bg-gray-500 text-white px-3 py-1 rounded disabled:opacity-50 hover:bg-gray-600"
+            className="bg-gray-500 dark:bg-gray-600 text-white px-3 py-1 rounded disabled:opacity-50 hover:bg-gray-600 dark:hover:bg-gray-500"
           >
             Previous 5
           </button>
-          <span className="text-sm text-gray-600">Page {page}</span>
+          <span className="text-sm text-gray-600 dark:text-gray-400">Page {page}</span>
           <button
             onClick={goToNextPage}
             disabled={!hasNext}
-            className="bg-gray-500 text-white px-3 py-1 rounded disabled:opacity-50 hover:bg-gray-600"
+            className="bg-gray-500 dark:bg-gray-600 text-white px-3 py-1 rounded disabled:opacity-50 hover:bg-gray-600 dark:hover:bg-gray-500"
           >
             Next 5
           </button>
         </div>
       </div>
 
-      {/* Diff Popup (Moved outside sidebar container) */}
+      {/* Diff Popup */}
       <VersionDiffPopup
         isOpen={isDiffOpen}
-        onClose={() => setIsDiffOpen(false)}
+        closing={diffClosing}
+        onClose={handlePopupClose}
         oldValue={diffData.oldValue}
         newValue={currentContent}
         versionNumber={diffData.versionNumber}

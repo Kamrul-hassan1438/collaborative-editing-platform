@@ -4,6 +4,7 @@ import axios from "../axios";
 import ReconnectingWebSocket from "reconnecting-websocket";
 import VersionHistorySidebar from "./VersionHistorySidebar";
 import CommentsSidebar from "./CommentsSidebar";
+import Modal from "./Modal";
 
 function DocumentEditor() {
   const { id } = useParams();
@@ -20,7 +21,8 @@ function DocumentEditor() {
   const [undoStack, setUndoStack] = useState([]);
   const [redoStack, setRedoStack] = useState([]);
   const [showSaveModal, setShowSaveModal] = useState(false);
-  const [activeSidebar, setActiveSidebar] = useState(null); // Replaced showVersionSidebar and showCommentsSidebar
+  const [saveModalClosing, setSaveModalClosing] = useState(false);
+  const [activeSidebar, setActiveSidebar] = useState(null);
   const navigatePath = useRef(null);
   const isSaving = useRef(false);
 
@@ -200,6 +202,12 @@ function DocumentEditor() {
       if (e.ctrlKey && e.key === "s") {
         e.preventDefault();
         handleSaveVersion();
+      } else if (e.ctrlKey && e.key === "z") {
+        e.preventDefault();
+        handleUndo();
+      } else if (e.ctrlKey && e.shiftKey && e.key === "z") {
+        e.preventDefault();
+        handleRedo();
       }
     };
     window.addEventListener("keydown", handleKeyDown);
@@ -239,28 +247,32 @@ function DocumentEditor() {
   };
 
   const handleModalConfirm = async (shouldSave) => {
-    setShowSaveModal(false);
-    if (shouldSave) {
-      try {
-        await handleSaveVersion();
+    setSaveModalClosing(true);
+    setTimeout(async () => {
+      setShowSaveModal(false);
+      setSaveModalClosing(false);
+      if (shouldSave) {
+        try {
+          await handleSaveVersion();
+          if (navigatePath.current) {
+            navigate(navigatePath.current);
+            navigatePath.current = null;
+          }
+        } catch (err) {
+          console.error("Save Error:", err);
+          setError("Failed to save before navigation");
+        }
+      } else {
+        setUnsavedChanges(false);
+        setUndoStack([content]);
+        setRedoStack([]);
+        localStorage.removeItem(`unsaved_document_${id}`);
         if (navigatePath.current) {
           navigate(navigatePath.current);
           navigatePath.current = null;
         }
-      } catch (err) {
-        console.error("Save Error:", err);
-        setError("Failed to save before navigation");
       }
-    } else {
-      setUnsavedChanges(false);
-      setUndoStack([content]);
-      setRedoStack([]);
-      localStorage.removeItem(`unsaved_document_${id}`);
-      if (navigatePath.current) {
-        navigate(navigatePath.current);
-        navigatePath.current = null;
-      }
-    }
+    }, 300);
   };
 
   const handleContentChange = (e) => {
@@ -354,7 +366,6 @@ function DocumentEditor() {
     }
   };
 
-  // Toggle sidebar, ensuring only one is open at a time
   const toggleSidebar = (sidebar) => {
     setActiveSidebar(activeSidebar === sidebar ? null : sidebar);
   };
@@ -363,16 +374,16 @@ function DocumentEditor() {
     return <div className="error text-center">{error}</div>;
 
   if (!document)
-    return <div className="text-center p-6 text-gray-500">Loading...</div>;
+    return <div className="text-center p-6 text-gray-500 dark:text-gray-400">Loading...</div>;
 
   return (
-    <div className="flex min-h-screen bg-gray-100">
+    <div className="flex min-h-screen bg-gray-100 dark:bg-gray-900">
       {/* Main Editor */}
       <div className="flex-1 p-8">
         <div className="container">
           <div className="card">
             <div className="flex justify-between items-center mb-6">
-              <h2 className="text-3xl font-bold text-gray-800">{document.title}</h2>
+              <h2 className="text-3xl font-bold text-gray-800 dark:text-gray-100">{document.title}</h2>
               <div className="flex space-x-2">
                 <button
                   onClick={() => toggleSidebar("versions")}
@@ -401,14 +412,14 @@ function DocumentEditor() {
                 disabled={undoStack.length <= 1}
                 className={undoStack.length <= 1 ? "btn-disabled" : "btn-secondary"}
               >
-                Undo
+                Undo (Ctrl+Z)
               </button>
               <button
                 onClick={handleRedo}
                 disabled={redoStack.length === 0}
                 className={redoStack.length === 0 ? "btn-disabled" : "btn-secondary"}
               >
-                Redo
+                Redo (Ctrl+Shift+Z)
               </button>
               {!isViewer && (
                 <button
@@ -444,7 +455,7 @@ function DocumentEditor() {
         setUndoStack={setUndoStack}
         setRedoStack={setRedoStack}
         setVersions={setVersions}
-        onClose={() => setActiveSidebar(null)} // Added close handler
+        onClose={() => setActiveSidebar(null)}
       />
       <CommentsSidebar
         isOpen={activeSidebar === "comments"}
@@ -459,28 +470,30 @@ function DocumentEditor() {
 
       {/* Save Modal */}
       {showSaveModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="card w-full max-w-md">
-            <h3 className="text-lg font-semibold mb-4">Unsaved Changes</h3>
-            <p className="text-gray-700 mb-6">
-              You have unsaved changes. Would you like to save a version before leaving?
-            </p>
-            <div className="flex justify-end space-x-3">
-              <button
-                onClick={() => handleModalConfirm(false)}
-                className="btn-secondary"
-              >
-                Don't Save
-              </button>
-              <button
-                onClick={() => handleModalConfirm(true)}
-                className="btn-primary"
-              >
-                Save and Leave
-              </button>
-            </div>
+        <Modal
+          isOpen={showSaveModal}
+          onClose={() => handleModalConfirm(false)}
+          title="Unsaved Changes"
+          closing={saveModalClosing}
+        >
+          <p className="text-gray-700 dark:text-gray-300 mb-6">
+            You have unsaved changes. Would you like to save a version before leaving?
+          </p>
+          <div className="flex justify-end space-x-3">
+            <button
+              onClick={() => handleModalConfirm(false)}
+              className="btn-secondary"
+            >
+              Don't Save
+            </button>
+            <button
+              onClick={() => handleModalConfirm(true)}
+              className="btn-primary"
+            >
+              Save and Leave
+            </button>
           </div>
-        </div>
+        </Modal>
       )}
     </div>
   );
