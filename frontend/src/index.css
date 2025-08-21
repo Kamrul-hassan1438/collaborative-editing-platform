@@ -48,7 +48,7 @@
   }
 
   .textarea {
-    @apply w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:border-blue-500 dark:focus:border-blue-400 focus:ring-2 focus:ring-blue-500/20 dark:focus:ring-blue-400/20 transition-all duration-200 resize-y min-h-[150px];
+    @apply w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 focus:border-blue-500 dark:focus:border-blue-400 focus:ring-2 focus:ring-blue-500/20 dark:focus:ring-blue-400/20 transition-all duration-200 resize-y min-h-[150px] font-mono;
   }
 
   .select {
@@ -101,6 +101,16 @@
 
   .loading {
     @apply text-center text-gray-500 dark:text-gray-400 italic text-lg;
+  }
+
+  .cursor-marker {
+    @apply absolute w-2 h-6 z-50 animate-pulse pointer-events-none;
+    border-left: 3px solid;
+    opacity: 1;
+  }
+
+  .presence-indicator {
+    @apply bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 px-3 py-1 rounded-full text-sm font-medium transition-opacity duration-300 animate-fade-in;
   }
 
   @keyframes slide-in {

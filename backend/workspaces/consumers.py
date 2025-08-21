@@ -36,6 +36,18 @@ class DocumentConsumer(AsyncWebsocketConsumer):
     async def disconnect(self, close_code):
         if hasattr(self, 'group_name'):
             await self.channel_layer.group_discard(self.group_name, self.channel_name)
+            # Broadcast cursor removal on disconnect
+            await self.channel_layer.group_send(
+                self.group_name,
+                {
+                    'type': 'cursor_update',
+                    'message': {
+                        'user_id': self.scope['user'].id,
+                        'username': self.scope['user'].username,
+                        'action': 'remove'
+                    }
+                }
+            )
 
     async def receive(self, text_data):
         user = self.scope.get('user')
@@ -44,49 +56,72 @@ class DocumentConsumer(AsyncWebsocketConsumer):
             return
 
         data = json.loads(text_data)
-        content = data.get('content')
-        user_id = data.get('user_id')
-        if not content or not isinstance(content, dict) or 'blocks' not in content or not isinstance(content['blocks'], list) or not content['blocks']:
-            await self.send(text_data=json.dumps({'error': 'Invalid content format: blocks must be a non-empty list'}))
-            return
+        message_type = data.get('type')
 
-        try:
-            document = await sync_to_async(Document.objects.get)(id=self.document_id)
-            workspace = await sync_to_async(lambda: document.workspace)()
-            member = await sync_to_async(
-                lambda: WorkspaceMember.objects.get(workspace=workspace, user=user)
-            )()
-            if member.role == 'viewer':
-                await self.send(text_data=json.dumps({'error': 'Viewers cannot edit documents'}))
+        if message_type == 'cursor_update':
+            cursor_data = data.get('cursor_data')
+            if not cursor_data or not isinstance(cursor_data, dict):
+                await self.send(text_data=json.dumps({'error': 'Invalid cursor data'}))
                 return
-
-            old_content = document.content.get('blocks', [{}])[0].get('text', '') if document.content.get('blocks') else ''
-            new_content = content['blocks'][0].get('text', '') if content['blocks'] else ''
-            diff = list(difflib.ndiff(old_content.splitlines(), new_content.splitlines())) if old_content != new_content else []
-
-            
-
-            # Do not save document here; rely on explicit API calls
             await self.channel_layer.group_send(
                 self.group_name,
                 {
-                    'type': 'document_update',
+                    'type': 'cursor_update',
                     'message': {
-                        'content': content,
-                        'diff': diff,
-                        'user_id': user_id,
-                        'user': user.username
+                        'user_id': user.id,
+                        'username': user.username,
+                        'cursor_position': cursor_data.get('position'),
+                        'selection_start': cursor_data.get('selection_start'),
+                        'selection_end': cursor_data.get('selection_end'),
+                        'action': 'update'
                     }
                 }
             )
-        except ObjectDoesNotExist:
-            await self.send(text_data=json.dumps({'error': 'Document or membership not found'}))
-        except Exception as e:
-            print(f"Error in DocumentConsumer: {str(e)}")
-            await self.send(text_data=json.dumps({'error': str(e)}))
+        else:
+            content = data.get('content')
+            user_id = data.get('user_id')
+            if not content or not isinstance(content, dict) or 'blocks' not in content or not isinstance(content['blocks'], list) or not content['blocks']:
+                await self.send(text_data=json.dumps({'error': 'Invalid content format: blocks must be a non-empty list'}))
+                return
+
+            try:
+                document = await sync_to_async(Document.objects.get)(id=self.document_id)
+                workspace = await sync_to_async(lambda: document.workspace)()
+                member = await sync_to_async(
+                    lambda: WorkspaceMember.objects.get(workspace=workspace, user=user)
+                )()
+                if member.role == 'viewer':
+                    await self.send(text_data=json.dumps({'error': 'Viewers cannot edit documents'}))
+                    return
+
+                old_content = document.content.get('blocks', [{}])[0].get('text', '') if document.content.get('blocks') else ''
+                new_content = content['blocks'][0].get('text', '') if content['blocks'] else ''
+                diff = list(difflib.ndiff(old_content.splitlines(), new_content.splitlines())) if old_content != new_content else []
+
+                # Do not save document here; rely on explicit API calls
+                await self.channel_layer.group_send(
+                    self.group_name,
+                    {
+                        'type': 'document_update',
+                        'message': {
+                            'content': content,
+                            'diff': diff,
+                            'user_id': user_id,
+                            'user': user.username
+                        }
+                    }
+                )
+            except ObjectDoesNotExist:
+                await self.send(text_data=json.dumps({'error': 'Document or membership not found'}))
+            except Exception as e:
+                print(f"Error in DocumentConsumer: {str(e)}")
+                await self.send(text_data=json.dumps({'error': str(e)}))
 
     async def document_update(self, event):
         await self.send(text_data=json.dumps(event['message']))
+
+    async def cursor_update(self, event):
+        await self.send(text_data=json.dumps({'type': 'cursor_update', 'message': event['message']}))
 
 class CommentConsumer(AsyncWebsocketConsumer):
     async def connect(self):
@@ -160,3 +195,4 @@ class CommentConsumer(AsyncWebsocketConsumer):
 
     async def comment_update(self, event):
         await self.send(text_data=json.dumps(event['message']))
+        

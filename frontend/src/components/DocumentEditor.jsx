@@ -1,10 +1,16 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import axios from "../axios";
 import ReconnectingWebSocket from "reconnecting-websocket";
 import VersionHistorySidebar from "./VersionHistorySidebar";
 import CommentsSidebar from "./CommentsSidebar";
 import Modal from "./Modal";
+
+// Utility to generate a unique color based on user ID
+const generateUserColor = (userId) => {
+  const hue = (userId * 137.508) % 360; // Simple hash to generate unique hue
+  return `hsl(${hue}, 70%, 50%)`;
+};
 
 function DocumentEditor() {
   const { id } = useParams();
@@ -25,6 +31,9 @@ function DocumentEditor() {
   const [activeSidebar, setActiveSidebar] = useState(null);
   const navigatePath = useRef(null);
   const isSaving = useRef(false);
+  const textareaRef = useRef(null);
+  const [collaborators, setCollaborators] = useState({});
+  const cursorUpdateTimeout = useRef(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -118,7 +127,19 @@ function DocumentEditor() {
       const data = JSON.parse(e.data);
       console.log("WebSocket document message:", data);
       if (isMounted && !isSaving.current) {
-        if (data.error) {
+        if (data.type === 'cursor_update') {
+          const { user_id, username, cursor_position, selection_start, selection_end, action } = data.message;
+          setCollaborators((prev) => {
+            if (action === 'remove') {
+              const { [user_id]: _, ...rest } = prev;
+              return rest;
+            }
+            return {
+              ...prev,
+              [user_id]: { username, cursor_position, selection_start, selection_end, color: generateUserColor(user_id) },
+            };
+          });
+        } else if (data.error) {
           setError(data.error);
         } else if (data.content) {
           const newContent =
@@ -236,6 +257,24 @@ function DocumentEditor() {
       localStorage.setItem(`unsaved_document_${id}`, content);
     }
   }, [content, unsavedChanges, id]);
+
+  // Handle cursor updates
+  const handleCursorChange = useCallback(() => {
+    if (!textareaRef.current || !docWs || docWs.readyState !== WebSocket.OPEN || isViewer) return;
+
+    const { selectionStart, selectionEnd } = textareaRef.current;
+    const cursorData = {
+      position: selectionStart,
+      selection_start: selectionStart,
+      selection_end: selectionEnd,
+    };
+
+    // Debounce cursor updates to avoid flooding WebSocket
+    if (cursorUpdateTimeout.current) clearTimeout(cursorUpdateTimeout.current);
+    cursorUpdateTimeout.current = setTimeout(() => {
+      docWs.send(JSON.stringify({ type: 'cursor_update', cursor_data: cursorData }));
+    }, 100);
+  }, [docWs, isViewer]);
 
   const handleNavigation = (path) => {
     if (unsavedChanges) {
@@ -366,6 +405,23 @@ function DocumentEditor() {
     }
   };
 
+  // Calculate cursor positions for rendering
+  const getCursorStyle = (collaborator) => {
+    if (!textareaRef.current || collaborator.cursor_position === undefined) return {};
+    const textarea = textareaRef.current;
+    const text = textarea.value.slice(0, collaborator.cursor_position);
+    const lines = text.split('\n');
+    const line = lines.length - 1; // Actual line (0-based)
+    const column = lines[lines.length - 1].length;
+    const charWidth = 8; // Approximate pixel width per character
+    const lineHeight = 20; // Approximate pixel height per line
+    return {
+      top: `${line * lineHeight}px`,
+      left: `${column * charWidth}px`,
+      backgroundColor: collaborator.color,
+    };
+  };
+
   const toggleSidebar = (sidebar) => {
     setActiveSidebar(activeSidebar === sidebar ? null : sidebar);
   };
@@ -381,7 +437,7 @@ function DocumentEditor() {
       {/* Main Editor */}
       <div className="flex-1 p-8">
         <div className="container">
-          <div className="card">
+          <div className="card relative">
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-3xl font-bold text-gray-800 dark:text-gray-100">{document.title}</h2>
               <div className="flex space-x-2">
@@ -400,9 +456,23 @@ function DocumentEditor() {
               </div>
             </div>
             {error && <p className="error">{error}</p>}
+            {/* Presence Indicators */}
+            <div className="flex space-x-4 mb-4">
+              {Object.values(collaborators).map((collaborator) => (
+                collaborator.username && (
+                  <div
+                    key={collaborator.user_id}
+                    className="presence-indicator"
+                    style={{ borderLeft: `4px solid ${collaborator.color}` }}
+                  >
+                    {collaborator.username} is editing
+                  </div>
+                )
+              ))}
+            </div>
             <div className="mb-4 flex items-center space-x-2">
               <button
-                onClick={() => handleNavigation("/dashboard")}
+                onClick={() => handleNavigation("/workspaces")}
                 className="btn-secondary"
               >
                 Back
@@ -430,13 +500,27 @@ function DocumentEditor() {
                 </button>
               )}
             </div>
-            <textarea
-              value={content}
-              onChange={handleContentChange}
-              className="textarea h-96 text-lg"
-              placeholder="Document content..."
-              readOnly={isViewer}
-            />
+            <div className="relative">
+              <textarea
+                ref={textareaRef}
+                value={content}
+                onChange={handleContentChange}
+                onSelect={handleCursorChange}
+                className="textarea h-96 text-lg"
+                placeholder="Document content..."
+                readOnly={isViewer}
+              />
+              {Object.entries(collaborators).map(([user_id, collaborator]) => (
+                collaborator.cursor_position !== undefined && (
+                  <div
+                    key={user_id}
+                    className="cursor-marker"
+                    style={getCursorStyle(collaborator)}
+                    title={collaborator.username}
+                  />
+                )
+              ))}
+            </div>
           </div>
         </div>
       </div>
