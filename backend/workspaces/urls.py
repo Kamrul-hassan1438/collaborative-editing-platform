@@ -15,7 +15,8 @@ from .views import (
     DocumentVersionDetailView,
     DocumentRevertView,
     FolderDetailView,
-    SaveDocumentVersionView
+    SaveDocumentVersionView,
+    WorkspaceInviteLinkView
 )
 
 urlpatterns = [
@@ -38,4 +39,5 @@ urlpatterns = [
     path('workspaces/<int:workspace_id>/folders/<int:folder_id>/', FolderDetailView.as_view(), name='folder-detail'),
     path('documents/<int:pk>/save_version/', SaveDocumentVersionView.as_view(), name='document-save-version'),
 
+     path('workspaces/<int:workspace_id>/invite-link/', WorkspaceInviteLinkView.as_view(), name='workspace-invite-link')
 ]

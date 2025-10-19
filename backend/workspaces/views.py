@@ -16,6 +16,9 @@ from pymongo import MongoClient
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 from bson import ObjectId
+from .utils import generate_invite_token, verify_invite_token
+
+
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +97,25 @@ class WorkspaceMemberView(APIView):
                 )
         logger.error(f"Member addition failed: {serializer.errors}, data: {request.data}")
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+
+
+
+class WorkspaceInviteLinkView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsWorkspaceOwner]
+
+    def post(self, request, workspace_id):
+        role = request.data.get("role", "viewer")
+        if role not in ["viewer", "editor"]:
+            return Response({"error": "Invalid role"}, status=400)
+
+        token = generate_invite_token(workspace_id, role)
+        invite_link = f"{settings.FRONTEND_URL}/workspaces/join?token={token}"
+
+        return Response({"invite_link": invite_link})
+
+
 
 class FolderView(APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -296,24 +318,30 @@ class CommentDetailView(APIView):
         comment.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+
 class JoinWorkspaceView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
-    def post(self, request, workspace_id):
-        role = request.data.get('role', 'viewer')
-        if role not in ['editor', 'viewer']:
-            logger.error(f"Invalid role provided: {role}")
-            return Response({'error': 'Invalid role'}, status=status.HTTP_400_BAD_REQUEST)
+    def post(self, request):
+        token = request.data.get("token")
+        data = verify_invite_token(token)
+        if not data:
+            return Response({"error": "Invalid or expired invite link"}, status=400)
+
+        workspace_id = data["workspace_id"]
+        role = data["role"]
+
         try:
             workspace = Workspace.objects.get(id=workspace_id)
-            if WorkspaceMember.objects.filter(workspace=workspace, user=request.user).exists():
-                logger.warning(f"User {request.user.username} already a member of workspace {workspace_id}")
-                return Response({'error': 'You are already a member of the workspace'}, status=status.HTTP_400_BAD_REQUEST)
-            WorkspaceMember.objects.create(workspace=workspace, user=request.user, role=role)
-            return Response({'message': 'Successfully joined workspace'}, status=status.HTTP_201_CREATED)
         except Workspace.DoesNotExist:
-            logger.error(f"Workspace {workspace_id} not found for join request")
-            return Response({'error': 'Workspace not found'}, status=status.HTTP_404_NOT_FOUND)
+            return Response({"error": "Workspace not found"}, status=404)
+
+        if WorkspaceMember.objects.filter(workspace=workspace, user=request.user).exists():
+            return Response({"error": "Already a member"}, status=400)
+
+        WorkspaceMember.objects.create(workspace=workspace, user=request.user, role=role)
+        return Response({"message": f"Successfully joined as {role}"}, status=201)
+
 
 class LastFivePagination(PageNumberPagination):
     page_size = 5

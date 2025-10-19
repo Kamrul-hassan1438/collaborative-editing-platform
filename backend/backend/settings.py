@@ -86,6 +86,7 @@ DATABASES = {
 }
 
 
+FRONTEND_URL = "http://localhost:5173"
 
 # MongoDB settings (using pymongo directly)
 MONGO_URI = 'mongodb://localhost:27017/'
